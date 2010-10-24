@@ -1,10 +1,19 @@
 package processing.android.jruby;
 
 import processing.core.PApplet;
+import processing.core.PVector;
 
 import android.os.Bundle;
 import android.os.AsyncTask;
+import android.app.Dialog;
+import android.app.ProgressDialog;
 import android.util.Log;
+import android.content.Context;
+import android.view.Menu;
+import android.view.MenuItem;
+
+import android.os.PowerManager;
+import android.os.PowerManager.WakeLock;
 
 import org.jruby.Ruby;
 import org.jruby.RubyInstanceConfig;
@@ -29,13 +38,24 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.util.EntityUtils;
 import org.apache.http.HttpEntity;
 
+import edu.uic.ketai.inputService.*;
+
 public class PJRubyApplet extends PApplet {
 
-  private static final boolean LOGV = false;
+  private static final boolean LOGV = true;
   private static final String TAG = PJRubyApplet.class.getSimpleName();
+
+  private static final int RUBY_LOADING = 1;
 
   private Ruby __ruby__;
   private IRubyObject __this__;
+
+  private KetaiSensorManager sensorManager;
+
+  public PVector orientation, magneticField, accelerometer;
+
+  private PowerManager.WakeLock wl;
+  private FileWatcher filewatcher;
 
   private static DynamicScope scope;
 
@@ -43,24 +63,56 @@ public class PJRubyApplet extends PApplet {
   public void onCreate(Bundle saved) {
     super.onCreate(saved);
 
+    showDialog(RUBY_LOADING);
     __ruby__ = setUpJRuby(null, null);
+    dismissDialog(RUBY_LOADING);
+
     __this__ = JavaUtil.convertJavaToRuby(__ruby__, PJRubyApplet.this);
+
+    orientation   = new PVector();
+    magneticField = new PVector();
+    accelerometer = new PVector();
+
+    sensorManager = new KetaiSensorManager(this);
+    sensorManager.start();
   }
 
   @Override
   public void onResume() {
     super.onResume();
+
     loadScript(getScriptUrl());
+
+    PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+    if (wl == null) {
+      wl = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK, "ruboto-processing");
+    }
+    if (!wl.isHeld()) wl.acquire();
+    filewatcher.resume();
   }
 
-  @Override 
-  public void setup() {
+  @Override protected void onPause() {
+    super.onPause();
+
+    if (wl != null && wl.isHeld()) wl.release();
+    filewatcher.pause();
+  }
+
+  @Override public void onDestroy() {
+    if (filewatcher != null) filewatcher.cancel(true);
+    super.onDestroy();
+  }
+
+  @Override public void setup() {
     RuntimeHelpers.invoke(__ruby__.getCurrentContext(), __this__, "rsetup");
   }
 
-  @Override
-  public void draw() {
-    RuntimeHelpers.invoke(__ruby__.getCurrentContext(), __this__, "rdraw");
+  @Override public void draw() {
+    try {
+      RuntimeHelpers.invoke(__ruby__.getCurrentContext(), __this__, "rdraw");
+    } catch (Exception e) {
+       Log.e(TAG, "exception in ruby code", e);
+    }
   }
 
   public synchronized Ruby setUpJRuby(PrintStream out, String scriptsDir) {
@@ -91,8 +143,45 @@ public class PJRubyApplet extends PApplet {
   }
 
   public void loadScript(URI uri) {
-    PJRubyApplet.this.paused = true;
-    new FileWatcher().execute(uri);
+    if (this.filewatcher == null) {
+      PJRubyApplet.this.paused = true;
+
+      this.filewatcher = new FileWatcher();
+      filewatcher.execute(uri);
+    }
+  }
+
+  @Override
+  protected Dialog onCreateDialog(int id, Bundle args) {
+    Log.d(TAG, "onCreateDialog(" +id+")");
+
+    switch (id) {
+      case RUBY_LOADING:
+        ProgressDialog d = new ProgressDialog(this);
+        d.setTitle("Loading JRuby");
+        d.setMessage("Please wait");
+        d.setIndeterminate(true);
+        d.setCancelable(false);
+        return d;
+      default:
+        return null;
+     }
+  }
+
+  @Override public boolean onCreateOptionsMenu(Menu menu) {
+    MenuItem exit = menu.add("Exit");
+    exit.setIcon(android.R.drawable.ic_menu_close_clear_cancel);
+    return true;
+  }
+
+  @Override public boolean onOptionsItemSelected(MenuItem item) {
+    if (item.getTitle().equals("Exit")) {
+      Log.d(TAG, "exit");
+      finish();
+      return true;
+    }
+
+    return false;
   }
 
   public int sketchWidth() { return 320; }
@@ -103,6 +192,7 @@ public class PJRubyApplet extends PApplet {
     HttpClient httpclient = new DefaultHttpClient();
     String lastEtag;
     long delay = 2000;
+    boolean paused = false;
 
     ResponseHandler<String> responseHandler = new ResponseHandler<String>() {
       @Override
@@ -118,6 +208,9 @@ public class PJRubyApplet extends PApplet {
     };
 
 
+    public void pause()  { paused = true; }
+    public void resume() { paused = false; }
+
     @Override
     protected void onPreExecute() {}
 
@@ -126,19 +219,21 @@ public class PJRubyApplet extends PApplet {
       final URI uri = uris[0];
 
       while (true) {
-          try {
-            if (LOGV) Log.v(TAG, "getting script from " + uri);
+          if (!paused) {
+            try {
+              if (LOGV) Log.v(TAG, "getting script from " + uri);
 
-            final HttpGet get = new HttpGet(uri);
-            if (lastEtag != null) {
-              if (LOGV) Log.v(TAG, "If-None-Match: " + lastEtag);
-              get.setHeader("If-None-Match", lastEtag);
+              final HttpGet get = new HttpGet(uri);
+              if (lastEtag != null) {
+                if (LOGV) Log.v(TAG, "If-None-Match: " + lastEtag);
+                get.setHeader("If-None-Match", lastEtag);
+              }
+
+              publishProgress(httpclient.execute(get, responseHandler));
+
+            } catch (java.io.IOException e) {
+              Log.e(TAG, "error getting script", e);
             }
-
-            publishProgress(httpclient.execute(get, responseHandler));
-
-          } catch (java.io.IOException e) {
-            Log.e(TAG, "error getting script", e);
           }
 
           try {
@@ -153,14 +248,30 @@ public class PJRubyApplet extends PApplet {
     @Override
     protected void onProgressUpdate(String... p) {
         if (p != null && p.length > 0 && p[0] != null) {
-          if (LOGV) Log.v(TAG, "progress: " + p[0].length() + " bytes");
           PJRubyApplet.this.__ruby__.evalScriptlet(p[0], scope);
           PJRubyApplet.this.paused = false;
+
+          Log.d(TAG, "loaded new script: " + p[0].length() + " bytes");
         }
     }
 
     @Override
     protected void onPostExecute(String result) {
     }
+  }
+
+  public void onOrientationSensorEvent(long time, int accuracy, float x, float y, float z) {
+   //if (LOGV) Log.v(TAG, String.format("onOrientationSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
+   orientation.set(x,y,z);
+  }
+
+  public void onAccelerometerSensorEvent(long time, int accuracy, float x, float y, float z) {
+   //if (LOGV) Log.v(TAG, String.format("onAccelerometerSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
+   accelerometer.set(x,y,z);
+  }
+
+  public void onMagneticFieldSensorEvent(long time, int accuracy, float x, float y, float z) {
+   //if (LOGV) Log.v(TAG, String.format("onMagneticFieldSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
+   magneticField.set(x,y,z);
   }
 }
