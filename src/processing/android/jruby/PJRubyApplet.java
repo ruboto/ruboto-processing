@@ -3,6 +3,7 @@ package processing.android.jruby;
 import processing.core.PApplet;
 
 import android.os.Bundle;
+import android.os.AsyncTask;
 import android.util.Log;
 
 import org.jruby.Ruby;
@@ -25,9 +26,12 @@ import org.apache.http.impl.client.BasicResponseHandler;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.util.EntityUtils;
+import org.apache.http.HttpEntity;
 
 public class PJRubyApplet extends PApplet {
 
+  private static final boolean LOGV = false;
   private static final String TAG = PJRubyApplet.class.getSimpleName();
 
   private Ruby __ruby__;
@@ -46,7 +50,7 @@ public class PJRubyApplet extends PApplet {
   @Override
   public void onResume() {
     super.onResume();
-    __ruby__.evalScriptlet(getScript(), scope);
+    loadScript(getScriptUrl());
   }
 
   @Override 
@@ -86,21 +90,77 @@ public class PJRubyApplet extends PApplet {
     return URI.create("https://gist.github.com/raw/7eae9d1bef4b1fdf3c9e/gistfile1.txt");
   }
 
-  public String getScript() {
-    final URI url = getScriptUrl();
-    Log.d(TAG, "getting script from " + url);
-
-    try {
-      HttpClient httpclient = new DefaultHttpClient();  
-      ResponseHandler<String> responseHandler = new BasicResponseHandler();
-      return httpclient.execute(new HttpGet(url), responseHandler);
-    } catch (java.io.IOException e) {
-      Log.e(TAG, "error getting script", e);
-      return "";
-    }
+  public void loadScript(URI uri) {
+    PJRubyApplet.this.paused = true;
+    new FileWatcher().execute(uri);
   }
 
   public int sketchWidth() { return 320; }
   public int sketchHeight() { return 480; }
   public String sketchRenderer() { return P2D; }
+
+  private class FileWatcher extends AsyncTask<URI, String, String> {
+    HttpClient httpclient = new DefaultHttpClient();
+    String lastEtag;
+    long delay = 2000;
+
+    ResponseHandler<String> responseHandler = new ResponseHandler<String>() {
+      @Override
+      public String handleResponse(HttpResponse resp)
+        throws org.apache.http.client.HttpResponseException,
+               java.io.IOException {
+
+        if (resp.getStatusLine().getStatusCode() >= 300) return null;
+        FileWatcher.this.lastEtag = resp.getFirstHeader("ETag").getValue();
+        HttpEntity entity = resp.getEntity();
+        return entity == null ? null : EntityUtils.toString(entity);
+      }
+    };
+
+
+    @Override
+    protected void onPreExecute() {}
+
+    @Override
+    protected String doInBackground(final URI... uris) {
+      final URI uri = uris[0];
+
+      while (true) {
+          try {
+            if (LOGV) Log.v(TAG, "getting script from " + uri);
+
+            final HttpGet get = new HttpGet(uri);
+            if (lastEtag != null) {
+              if (LOGV) Log.v(TAG, "If-None-Match: " + lastEtag);
+              get.setHeader("If-None-Match", lastEtag);
+            }
+
+            publishProgress(httpclient.execute(get, responseHandler));
+
+          } catch (java.io.IOException e) {
+            Log.e(TAG, "error getting script", e);
+          }
+
+          try {
+            if (LOGV) Log.v(TAG, "sleeping");
+            Thread.sleep(delay);
+          } catch (InterruptedException e) {
+
+          }
+      }
+    }
+
+    @Override
+    protected void onProgressUpdate(String... p) {
+        if (p != null && p.length > 0 && p[0] != null) {
+          if (LOGV) Log.v(TAG, "progress: " + p[0].length() + " bytes");
+          PJRubyApplet.this.__ruby__.evalScriptlet(p[0], scope);
+          PJRubyApplet.this.paused = false;
+        }
+    }
+
+    @Override
+    protected void onPostExecute(String result) {
+    }
+  }
 }
