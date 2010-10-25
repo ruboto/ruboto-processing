@@ -47,7 +47,7 @@ public class PJRubyApplet extends PApplet {
 
   private static final int RUBY_LOADING = 1;
 
-  private Ruby __ruby__;
+  private static Ruby __ruby__;
   private IRubyObject __this__;
 
   private KetaiSensorManager sensorManager;
@@ -64,7 +64,11 @@ public class PJRubyApplet extends PApplet {
     super.onCreate(saved);
 
     showDialog(RUBY_LOADING);
-    __ruby__ = setUpJRuby(null, null);
+
+    if (__ruby__ == null) {
+      __ruby__ = setUpJRuby(null, null);
+    }
+
     dismissDialog(RUBY_LOADING);
 
     __this__ = JavaUtil.convertJavaToRuby(__ruby__, PJRubyApplet.this);
@@ -79,7 +83,10 @@ public class PJRubyApplet extends PApplet {
 
   @Override
   public void onResume() {
+    Log.d(TAG, "onResume()");
     super.onResume();
+
+    getWindow().setContentView(surfaceView);
 
     loadScript(getScriptUrl());
 
@@ -92,13 +99,17 @@ public class PJRubyApplet extends PApplet {
   }
 
   @Override protected void onPause() {
+    Log.d(TAG, "onPause()");
+
     super.onPause();
 
     if (wl != null && wl.isHeld()) wl.release();
-    filewatcher.pause();
+    if (filewatcher != null) filewatcher.pause();
   }
 
   @Override public void onDestroy() {
+    Log.d(TAG, "onDestroy()");
+
     if (filewatcher != null) filewatcher.cancel(true);
     super.onDestroy();
   }
@@ -152,7 +163,7 @@ public class PJRubyApplet extends PApplet {
   }
 
   @Override
-  protected Dialog onCreateDialog(int id, Bundle args) {
+  protected Dialog onCreateDialog(int id) {
     Log.d(TAG, "onCreateDialog(" +id+")");
 
     switch (id) {
@@ -184,8 +195,6 @@ public class PJRubyApplet extends PApplet {
     return false;
   }
 
-  public int sketchWidth() { return 320; }
-  public int sketchHeight() { return 480; }
   public String sketchRenderer() { return P2D; }
 
   private class FileWatcher extends AsyncTask<URI, String, String> {
@@ -218,7 +227,7 @@ public class PJRubyApplet extends PApplet {
     protected String doInBackground(final URI... uris) {
       final URI uri = uris[0];
 
-      while (true) {
+      while (!isCancelled()) {
           if (!paused) {
             try {
               if (LOGV) Log.v(TAG, "getting script from " + uri);
@@ -243,6 +252,8 @@ public class PJRubyApplet extends PApplet {
 
           }
       }
+      if (LOGV) Log.v(TAG, "canceled");
+      return null;
     }
 
     @Override
@@ -262,16 +273,16 @@ public class PJRubyApplet extends PApplet {
 
   public void onOrientationSensorEvent(long time, int accuracy, float x, float y, float z) {
    //if (LOGV) Log.v(TAG, String.format("onOrientationSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
-   orientation.set(x,y,z);
+   orientation.set(x, y, z);
   }
 
   public void onAccelerometerSensorEvent(long time, int accuracy, float x, float y, float z) {
    //if (LOGV) Log.v(TAG, String.format("onAccelerometerSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
-   accelerometer.set(x,y,z);
+   accelerometer.set(x, y, z);
   }
 
   public void onMagneticFieldSensorEvent(long time, int accuracy, float x, float y, float z) {
    //if (LOGV) Log.v(TAG, String.format("onMagneticFieldSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
-   magneticField.set(x,y,z);
+   magneticField.set(x, y, z);
   }
 }
