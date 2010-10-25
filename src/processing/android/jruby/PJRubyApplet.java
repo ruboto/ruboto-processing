@@ -53,6 +53,7 @@ public class PJRubyApplet extends PApplet {
   private KetaiSensorManager sensorManager;
 
   public PVector orientation, magneticField, accelerometer;
+  public float proximity, light;
 
   private PowerManager.WakeLock wl;
   private FileWatcher filewatcher;
@@ -284,5 +285,15 @@ public class PJRubyApplet extends PApplet {
   public void onMagneticFieldSensorEvent(long time, int accuracy, float x, float y, float z) {
    //if (LOGV) Log.v(TAG, String.format("onMagneticFieldSensorEvent(%d, %d, %f, %f, %f)", time, accuracy, x, y, z));
    magneticField.set(x, y, z);
+  }
+
+  public void onProximitySensorEvent(long time, int accuracy, float v) {
+   //if (LOGV) Log.v(TAG, String.format("onProximitySensorEvent(%d, %d, %f", time, accuracy, v);
+   proximity = v;
+  }
+
+  public void onLightSensorEvent(long time, int accuracy, float v) {
+   //if (LOGV) Log.v(TAG, String.format("onLightSensorEvent(%d, %d, %f)", time, accuracy, v));
+   light = v;
   }
 }
