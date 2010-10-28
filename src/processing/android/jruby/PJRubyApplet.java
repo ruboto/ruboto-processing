@@ -27,6 +27,9 @@ import org.jruby.runtime.builtin.IRubyObject;
 import org.jruby.javasupport.util.RuntimeHelpers;
 
 import java.io.PrintStream;
+import java.io.FileInputStream;
+import java.lang.StringBuilder;
+import java.io.File;
 import java.net.URI;
 import java.io.InputStream;
 import org.apache.http.impl.client.DefaultHttpClient;
@@ -112,6 +115,8 @@ public class PJRubyApplet extends PApplet {
     Log.d(TAG, "onDestroy()");
 
     if (filewatcher != null) filewatcher.cancel(true);
+    if (wl != null && wl.isHeld()) wl.release();
+
     super.onDestroy();
   }
 
@@ -151,7 +156,8 @@ public class PJRubyApplet extends PApplet {
   }
 
   public URI getScriptUrl() {
-    return URI.create("https://gist.github.com/raw/7eae9d1bef4b1fdf3c9e/gistfile1.txt");
+    //return URI.create("https://gist.github.com/raw/7eae9d1bef4b1fdf3c9e/gistfile1.txt");
+    return URI.create("file:///sdcard/jruby/processing.rb");
   }
 
   public void loadScript(URI uri) {
@@ -199,8 +205,10 @@ public class PJRubyApplet extends PApplet {
   public String sketchRenderer() { return P2D; }
 
   private class FileWatcher extends AsyncTask<URI, String, String> {
+
     HttpClient httpclient = new DefaultHttpClient();
     String lastEtag;
+    long lastModified;
     long delay = 2000;
     boolean paused = false;
 
@@ -233,14 +241,37 @@ public class PJRubyApplet extends PApplet {
             try {
               if (LOGV) Log.v(TAG, "getting script from " + uri);
 
-              final HttpGet get = new HttpGet(uri);
-              if (lastEtag != null) {
-                if (LOGV) Log.v(TAG, "If-None-Match: " + lastEtag);
-                get.setHeader("If-None-Match", lastEtag);
+              String result = null;
+              if ("http".equals(uri.getScheme())) {
+                final HttpGet get = new HttpGet(uri);
+                if (lastEtag != null) {
+                  if (LOGV) Log.v(TAG, "If-None-Match: " + lastEtag);
+                  get.setHeader("If-None-Match", lastEtag);
+                }
+                result = httpclient.execute(get, responseHandler);
+              } else if ("file".equals(uri.getScheme())) {
+                File f = new File(uri.getPath());
+                if (!f.exists()) {
+                  Log.w(TAG, "could not find file " + f);
+                } else if (f.lastModified() > lastModified) {
+
+                  Log.d(TAG, "reading file " + f);
+
+                  byte[] buf = new byte[8192];
+                  FileInputStream fis = new FileInputStream(f);
+                  StringBuilder sb = new StringBuilder();
+                  int n;
+                  while ((n = fis.read(buf, 0, buf.length)) != -1)
+                    sb.append(new String(buf, 0, n));
+
+                  lastModified = f.lastModified();
+                  result = sb.toString();
+                }
               }
 
-              publishProgress(httpclient.execute(get, responseHandler));
-
+              if (result != null) {
+                publishProgress(result);
+              }
             } catch (java.io.IOException e) {
               Log.e(TAG, "error getting script", e);
             }
@@ -261,8 +292,12 @@ public class PJRubyApplet extends PApplet {
     protected void onProgressUpdate(String... p) {
         if (p != null && p.length > 0 && p[0] != null) {
           PJRubyApplet.this.__ruby__.evalScriptlet(p[0], scope);
-          PJRubyApplet.this.paused = false;
 
+          if (PJRubyApplet.this.paused) {
+            PJRubyApplet.this.paused = false;
+          } else {
+            RuntimeHelpers.invoke(__ruby__.getCurrentContext(), __this__, "rsetup");
+          }
           Log.d(TAG, "loaded new script: " + p[0].length() + " bytes");
         }
     }
